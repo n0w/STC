@@ -17,7 +17,7 @@ It can also wake the STC up by sending SIGCONT to its PID.
 
 It looks like this:
 
- Command ===>                                                   Row 1 to 7 of 7 
+ ``Command ===>                                                   Row 1 to 7 of 7 
                           ·-----------------------------·                       
  (USRNME)                 | Panel de control STC @UAACC |       SCROLL  ===> PAG
                           ·-----------------------------·                       
@@ -46,4 +46,5 @@ It looks like this:
        ·-------·----------·-----------------------------------------------·----·
        |     7 |     6:05 |                      SIS.SDAADM.JCL(LOADPDT2) |  S |
        ·-------·----------·-----------------------------------------------·----·
- ******************************* Bottom of data ********************************
+ ******************************* Bottom of data ********************************``
+ 
