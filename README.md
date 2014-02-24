@@ -3,7 +3,7 @@ STC
 
 STC (daemon) written in REXX to perform SQL queries and planify tasks
 
-The main module (STCRXPPL) is loaded as STC. Then it loops, sleeping for 15 secs each iteration,
+The main module (STCRXPPL) is loaded as STC. Then it loops, sleeping for 15 secs per iteration,
 checking for command rows when awoken.
 
 There are two kinds of command rows:
