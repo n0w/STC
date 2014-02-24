@@ -1,0 +1,15 @@
+)PANEL                                                                          
+)ATTR FORMAT(EBCDIC)                                                            
+   ] type( input) intens(high) caps(on ) just(right)                            
+   ¬ type(output) intens(low ) caps(off) just(asis)                             
+   $ type(output)   intens(low)  color(red) just (asis)                         
+)BODY WINDOW(56,4)                                                              
+% Proceso$iProc                                                                 
+% Planificado todos los¬iDia     %(¬iHora%)                                     
+% Fecha de ultima ejecucion:¬iLastExe                                           
+% Usuario que dio de alta:¬iUser                                                
+)INIT                                                                           
+                                                                                
+)PROC                                                                           
+                                                                                
+)END                                                                            

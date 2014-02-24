@@ -1,0 +1,25 @@
+)PANEL                                                                          
+)ATTR FORMAT(EBCDIC)                                                            
+   ] type( input) intens(high) caps(on ) just(left)                             
+   ¬ type(output) intens(low ) caps(off) just(asis)                             
+   $ type(output)   intens(low)  color(red) just (asis)                         
+)BODY WINDOW(56,5)                                                              
+% Proceso:]aProc                                                                
+% Dia (1 = Lunes, .., 7 = Domingo):]aDia                                        
+% Hora:]aHora                                                                   
+% Minuto:]aMin                                                                  
+% Modo (S = Submit, C = Console):]aModo                                         
+)INIT                                                                           
+                                                                                
+)PROC                                                                           
+VER (&aDia,RANGE,1,31)                                                          
+VER (&aHora,RANGE,0,23)                                                         
+VER (&aMin,RANGE,0,59)                                                          
+VER (&aModo,LIST,S,C)                                                           
+                                                                                
+VER (&aDia,LEN,'>',0)                                                           
+VER (&aHora,LEN,'>',0)                                                          
+VER (&aMin,LEN,'>',0)                                                           
+VER (&aModo,LEN,'>',0)                                                          
+                                                                                
+)END                                                                            

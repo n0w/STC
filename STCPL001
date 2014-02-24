@@ -1,0 +1,33 @@
+)PANEL                                                                          
+)ATTR FORMAT(EBCDIC)                                                            
+   ] type( input) intens(high) caps(on ) just(right)                            
+   ¬ type(output) intens(low ) caps(off) just(RIGHT)                            
+   $ type(text)   intens(low)  color(red)                                       
+)Body                                                                           
+%Command ===>_zcmd                                                              
+%                         ·-----------------------------·                       
++(&ZUSER)                %!$Panel de control STC @UAACC%!      %SCROLL  ===>_AMT
+%                         ·-----------------------------·                       
+%                                                                               
+% En la siguiente tabla se muestran todos los procesos planificados para        
+% ejecucion.                                                                    
+% Para dar de alta un nuevo proceso, escriba+ALTA                               
+% Para despertar la STC, escriba+WAKE                                           
+% Los comandos de linea posibles son:                                           
+   +I %- Informacion                                                            
+   +D %- Borrar                                                                 
++                                                                               
+% Sel     Dia      Hora                     Proceso                        Modo 
+%      ·-------·----------·-----------------------------------------------·----·
+)Model                                                                          
+  ]Z+ %!+ ¬DIA%!+ ¬HORA  %!+ ¬LANZA                                      %!¬MD%!
+%      ·-------·----------·-----------------------------------------------·----·
+)Init                                                                           
+  .ZVARS = '(LINECMD)'                                                          
+)Reinit                                                                         
+                                                                                
+)Proc                                                                           
+                                                                                
+  If (&ztdsels ¬= 0000)                                                         
+                                                                                
+)End                                                                            

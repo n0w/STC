@@ -1,0 +1,525 @@
+/**************************** REXX ***********************************/         
+/*                        ! STC AACC !                               */         
+/*                        ·==========·                               */         
+/*                                                                   */         
+/* Autor: Angel Suarez-Barcena Martin                                */         
+/*                                                                   */         
+/* Tarea que ejecuta automaticamente ciertos procesos especificados  */         
+/* en la tabla [DBC4]SDAYP.AP_COMANDO01.                             */         
+/*                                                                   */         
+/* Estos procesos pueden ser JCLs no planificados periodicamente     */         
+/* (queries de usuarios por la via autogestionada) o planificados    */         
+/* mediante filas en dicha tabla con la columna CMD1 = 'PLAN'.       */         
+/*********************************************************************/         
+                                                                                
+ARG PARAM                                                                       
+SLEEP_TIME = 15                                                                 
+FIN = 'N'                                                                       
+                                                                                
+ADDRESS SYSCALL "GETPID"                                                        
+PID = RETVAL                                                                    
+                                                                                
+/* Mostramos cabecera para dejar rastro en el spool                  */         
+XX = ACTUALIZA_TS_LOG()                                                         
+SAY "ÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑ"         
+SAY TS_LOG"Tarea iniciada con PID "PID                                          
+SAY "ÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑ"         
+SAY ""                                                                          
+                                                                                
+/* Activamos las syscalls                                            */         
+IF SYSCALLS("ON")>4 THEN                                                        
+DO                                                                              
+   SAY "[e] Fallo en la activacion de syscalls"                                 
+   EXIT 8                                                                       
+END                                                                             
+                                                                                
+/* Registramos el proceso para que reciba se¦ales                    */         
+IF SYSCALLS("SIGON")<>0 THEN                                                    
+DO                                                                              
+   SAY "[e] Fallo en el registro de la interfaz para syscalls"                  
+   EXIT 8                                                                       
+END                                                                             
+                                                                                
+/*  Activamos las se¦ales en rexx, desbloqueamos y habilitamos la    */         
+/*                     recepcion de SIGCONT                          */         
+                                                                                
+AUX = SIGADDSET(SIGSETEMPTY(),SIGCONT)                                          
+ADDRESS SYSCALL "SIGACTION" SIGCONT SIG_CAT 0 "OHDL OFLG"                       
+CALL SYSCALL_CMD "SIGPROCMASK" SIG_UNBLOCK AUX "MASK"                           
+                                                                                
+/*********************************************************************/         
+/* BUCLE PRINCIPAL                                                   */         
+/* Se ejecuta mientras FIN = 'N'.                                    */         
+/*********************************************************************/         
+DO WHILE FIN = 'N'                                                              
+   XX = SELECT_NOPLAN() /* Lee comandos no planificados              */         
+   XX = PROCESA_CMD()   /* Procesa si procede                        */         
+   XX = SELECT_PLAN()   /* Lee comandos planificados no ejecutados   */         
+   XX = PROCESA_PLAN()  /* Procesa si procede                        */         
+   XX = ESPERA()        /* Llama a SLEEP                             */         
+END                                                                             
+EXIT                                                                            
+                                                                                
+/*********************************************************************/         
+/* PROCESA_PLAN: Itera por el numero de filas planificadas listas    */         
+/* ser ejecutadas y lanza el comando contenido en la columna CMD2 de */         
+/* tabla [DBC4]SDAYP.AP_COMANDO01 mediante referencia a CONSOLE      */         
+/*********************************************************************/         
+PROCESA_PLAN:                                                                   
+   IF _NROWS > 0 THEN                                                           
+   DO                                                                           
+      FILAS_PLAN = _NROWS                                                       
+      I = 1                                                                     
+                                                                                
+      SAY "" /* Linea en blanco para mayor claridad en el spool      */         
+                                                                                
+      DO WHILE I <= FILAS_PLAN                                                  
+         CMD1 = AP01_CMD1.I                                                     
+         CMD2 = AP01_CMD2.I                                                     
+         DIASEM = AP01_DIASEM.I                                                 
+         HORA = AP01_HORA.I                                                     
+         MINUTO = AP01_MINUTO.I                                                 
+         MODO = AP01_MODO.I                                                     
+                                                                                
+         XX = ACTUALIZA_TS_LOG()                                                
+                                                                                
+         SELECT                                                                 
+            WHEN MODO = 'S' THEN                                                
+            DO                                                                  
+            /* Modo submit <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */         
+               SAY TS_LOG"SUBMIT: "CMD2                                         
+               MEMJOB = STRIP(WORD(CMD2 , 1))                                   
+               XX = SUBMIT_JOB1()                                               
+            END                                                                 
+                                                                                
+            WHEN MODO = 'C' THEN                                                
+            DO                                                                  
+            /* Modo console <<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<<< */        
+               SAY TS_LOG"CONSOLE: "CMD2                                        
+                                                                                
+               "CONSOLE SYSCMD("CMD2") CART('CONS0001')"                        
+                                                                                
+               /* Recuperamos salida */                                         
+               GETCODE = GETMSG('CONSMSG1.','SOL','CONS0001',,15)               
+                                                                                
+               IF GETCODE = 0 THEN                                              
+               DO CNT = 1 TO CONSMSG1.0                                         
+                  SAY CONSMSG1.CNT                                              
+               END                                                              
+                                                                                
+               GETCODE = GETMSG('CONSMSG2.','SOL','',,5)                        
+               IF GETCODE = 0 THEN                                              
+               DO CNT = 1 TO CONSMSG2.0                                         
+                  SAY CONSMSG2.CNT                                              
+               END                                                              
+            END /* DO del modo C                                     */         
+                                                                                
+            OTHERWISE                                                           
+            DO                                                                  
+               SAY "[e] Modo "MODO" no reconocido"                              
+            END                                                                 
+         END /* SELECT ÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑ */         
+                                                                                
+         /* Aqui hacemos el update a la tabla para no volver a ejecutar         
+         el proceso planificado en el mismo dia                      */         
+         XX = UPDATE_PLAN()                                                     
+                                                                                
+         I = I + 1                                                              
+      END                                                                       
+   END /* IF de filas */                                                        
+RETURN 00 /* PROCESA_PLAN ÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑÑ */         
+                                                                                
+/*********************************************************************/         
+/* PROCESA_CMD: Recoge comandos NO planificados (SUBMIT, START,      */         
+/* STOP) y llama a ANALIZA_CMD() para que se haga cargo de ellos.    */         
+/* Despues inserta en el historico y borra la fila procesada de la   */         
+/* tabla [DBC4]SDAYP.AP_COMANDO01.                                   */         
+/* NOTA: NO ITERA FILAS, YA QUE PROCESA UNA CADA VEZ Y LA BORRA.     */         
+/*********************************************************************/         
+PROCESA_CMD:                                                                    
+   IF _NROWS > 0 THEN                                                           
+   DO                                                                           
+      CMD1  = WORD(AP01_CMD1.1 , 1)                                             
+              XX = ANALIZA_CMD()                                                
+              TIME1 = AP01_TIME1.1                                              
+              XX = INSERT99()                                                   
+              XX = DELETE01()                                                   
+   END                                                                          
+                                                                                
+RETURN 00 /* PROCESA_CMD */                                                     
+                                                                                
+/*********************************************************************/         
+/* ANALIZA_CMD: Realiza la accion que corresponda segun el comando   */         
+/* leido.                                                            */         
+/*********************************************************************/         
+ANALIZA_CMD:                                                                    
+   XX = ACTUALIZA_TS_LOG()                                                      
+   SAY "" /* Linea en blanco para mayor claridad en el spool         */         
+   SAY TS_LOG"CMD (no plan.) = "CMD1                                            
+   SELECT                                                                       
+      WHEN CMD1 = 'STOP' THEN                                                   
+      DO                                                                        
+         SAY TIME(L) ': DETENEMOS LA STC'                                       
+         FIN = 'S'                                                              
+      END                                                                       
+                                                                                
+      WHEN CMD1 = 'SUBMIT' THEN                                                 
+      DO                                                                        
+         MEMJOB = STRIP(WORD(AP01_CMD1.1 , 2))                                  
+         XX = SUBMIT_JOB1()                                                     
+         SAY TIME(L) ': SUBMIT JCL ' MEMJOB                                     
+         FIN = 'N'                                                              
+      END                                                                       
+                                                                                
+      WHEN CMD1 = 'START' THEN                                                  
+      DO                                                                        
+         /* Coge tiempo de espera */                                            
+         S_WAI = WORD(AP01_CMD1.1 , 2)                                          
+         IF DATATYPE(S_WAI) = 'NUM' THEN                                        
+         DO                                                                     
+            SLEEP_TIME = S_WAI                                                  
+         END                                                                    
+         XX = SUBMIT_JOB2()                                                     
+         SAY TIME(L) ': ARRANCAMOS LA STC CON SLEEP DE ' SLEEP_TIME ,           
+                     ' SEGUNDOS'                                                
+         FIN = 'S'                                                              
+      END                                                                       
+                                                                                
+      OTHERWISE                                                                 
+      DO                                                                        
+         SAY TIME(L) ': CMD1 NO RECONOCIDO:' CMD1                               
+      END                                                                       
+   END     /* SELECT */                                                         
+RETURN 00 /* ANALIZA_CMD    */                                                  
+                                                                                
+/*********************************************************************/         
+/* ESPERA: Llama a la syscall SLEEP pasandole el tiempo en segundos  */         
+/* que espera hasta despertar de nuevo.                              */         
+/* La syscall SLEEP devuelve el numero de segundos restantes para    */         
+/* despertar en el momento de hacerlo, esto es, 0 si se desperto     */         
+/* solo, otro valor si se desperto mediante una se¦al (SIGCONT)      */         
+/*                                                                   */         
+/* TODO: Es necesario coger el PID aqui? Creo que no.                */         
+/*********************************************************************/         
+ESPERA:                                                                         
+   ADDRESS SYSCALL "GETPID"                                                     
+   PID = RETVAL                                                                 
+                                                                                
+   ADDRESS SYSCALL "SLEEP" SLEEP_TIME /*          Tiempo en segundos */         
+                                                                                
+   IF (RETVAL <> 0) THEN /*                     Nos han interrumpido */         
+   DO                                                                           
+      XX = ACTUALIZA_TS_LOG()                                                   
+      SAY TS_LOG"Despertado por SIGCONT faltando "RETVAL" segundos."            
+   END                                                                          
+RETURN 00 /* ESPERA */                                                          
+                                                                                
+/*********************************************************************/         
+/* ACTUALIZA_TS_LOG: Llama a las funciones DATE y TIME de REXX       */         
+/* y actualiza la cadena TS_LOG, para dejar marca de tiempo en la    */         
+/* salida del spool.                                                 */         
+/*********************************************************************/         
+ACTUALIZA_TS_LOG:                                                               
+   FECHA_LOG = DATE()                                                           
+   HORA_LOG  = TIME()                                                           
+   TS_LOG = "["FECHA_LOG" - "HORA_LOG"] "                                       
+RETURN 0 /* ACTUALIZA_TS_LOG */                                                 
+                                                                                
+/*********************************************************************/         
+/* SELECT_NOPLAN: Lanza la query que devuelve las filas de la tabla  */         
+/* [DBC4]SDAYP.AP_COMANDO01 correspondientes a la autogestion de     */         
+/* la util, es decir, las que no tienen 'PLAN' en la columna CMD1.   */         
+/*********************************************************************/         
+SELECT_NOPLAN:                                                                  
+   SUBSYS='DBC4'                                                                
+   SQLQUERY= ,                                                                  
+    "   SELECT                                                    ",            
+    "     AP01_USUARIO,                                           ",            
+    "     AP01_TIME1,                                             ",            
+    "     AP01_DIASEM,                                            ",            
+    "     AP01_HORA,                                              ",            
+    "     AP01_MINUTO,                                            ",            
+    "     AP01_ESTADO,                                            ",            
+    "     AP01_CMD1,                                              ",            
+    "     AP01_CMD2,                                              ",            
+    "     AP01_TIME2,                                             ",            
+    "     AP01_MODO                                               ",            
+    "   FROM SDAYP.AP_COMANDO01                                   ",            
+    "   WHERE AP01_CMD1 <> 'PLAN'                                 ",            
+    "   FOR READ ONLY WITH UR                                     ",            
+    "                                                             "             
+   "REXXSQL"                                                                    
+   RETURN 00  /* SELECT_NOPLAN */                                               
+                                                                                
+/*********************************************************************/         
+/* SELECT_PLAN: Lanza la query que devuelve las filas de la tabla    */         
+/* [DBC4]SDAYP.AP_COMANDO01 correspondientes a la planificacion      */         
+/* que aun no han sido ejecutadas, es decir, las que tienen 'PLAN'   */         
+/* en su CMD1, coinciden con dia, hora y minuto actuales y la ultima */         
+/* fecha de ejecucion es DISTINTA a la fecha actual.                 */         
+/*********************************************************************/         
+SELECT_PLAN:                                                                    
+   SUBSYS='DBC4'                                                                
+   SQLQUERY= ,                                                                  
+   "SELECT                                                        ",            
+   " AP01_USUARIO,                                                ",            
+   " AP01_TIME1,                                                  ",            
+   " AP01_DIASEM,                                                 ",            
+   " AP01_HORA,                                                   ",            
+   " AP01_MINUTO,                                                 ",            
+   " AP01_ESTADO,                                                 ",            
+   " AP01_CMD1,                                                   ",            
+   " AP01_CMD2,                                                   ",            
+   " AP01_TIME2,                                                  ",            
+   " AP01_MODO                                                    ",            
+   "FROM SDAYP.AP_COMANDO01                                       ",            
+   "WHERE AP01_CMD1 = 'PLAN'                                      ",            
+   "AND AP01_DIASEM = DAYOFWEEK_ISO (CURRENT_DATE)                ",            
+   "AND AP01_HORA = HOUR(CURRENT TIMESTAMP)                       ",            
+   "AND AP01_MINUTO = MINUTE(CURRENT TIMESTAMP)                   ",            
+   "AND DATE(AP01_TIME2) <> CURRENT_DATE                          "             
+   "REXXSQL"                                                                    
+   RETURN 00 /* SELECT_PLAN */                                                  
+                                                                                
+/*********************************************************************/         
+/* UPDATE_PLAN: Actualiza la fila correspondiente al proceso         */         
+/* planificado que se acaba de ejecutar, poniendo en la columna      */         
+/* AP01_TIME2 el TIMESTAMP actual.                                   */         
+/* De esta forma, solo ejecutamos cada fila planificada una vez,     */         
+/* y evitamos tener que borrarla de la tabla.                        */         
+/*********************************************************************/         
+UPDATE_PLAN:                                                                    
+   SUBSYS='DBC4'                                                                
+   SQLQUERY= ,                                                                  
+   "UPDATE SDAYP.AP_COMANDO01                                     ",            
+   "SET AP01_TIME2 = CURRENT_TIMESTAMP                            ",            
+   "WHERE                                                         ",            
+   "     AP01_DIASEM = "DIASEM"                                   ",            
+   " AND AP01_HORA = "HORA"                                       ",            
+   " AND AP01_MINUTO = "MINUTO"                                   "             
+   "REXXSQL"                                                                    
+RETURN 00  /* UPDATE_PLAN */                                                    
+                                                                                
+INSERT99:                                                                       
+   SUBSYS='DBC4'                                                                
+   SQLQUERY= ,                                                                  
+   "  INSERT INTO SDAYP.AP_COMANDO99                              ",            
+   "  SELECT                                                      ",            
+   "                      AP01_USUARIO,                           ",            
+   "                      AP01_TIME1,                             ",            
+   "                      AP01_DIASEM,                            ",            
+   "                      AP01_HORA,                              ",            
+   "                      AP01_MINUTO,                            ",            
+   "                      AP01_ESTADO,                            ",            
+   "                      AP01_CMD1,                              ",            
+   "                      AP01_CMD2,                              ",            
+   "  CURRENT TIMESTAMP   AP01_TIME2,                             ",            
+   "                      AP01_MODO                               ",            
+   "  FROM SDAYP.AP_COMANDO01                                     ",            
+   "  WHERE AP01_TIME1 = '"TIME1"'                                ",            
+   "                                                              ",            
+   "                                                              "             
+   "REXXSQL"                                                                    
+RETURN 00  /* INSERT99 */                                                       
+                                                                                
+INSERT99_PLAN:                                                                  
+   SUBSYS='DBC4'                                                                
+   SQLQUERY= ,                                                                  
+   "  INSERT INTO SDAYP.AP_COMANDO99                              ",            
+   "  SELECT                                                      ",            
+   "                      AP01_USUARIO,                           ",            
+   "                      AP01_TIME1,                             ",            
+   "                      AP01_DIASEM,                            ",            
+   "                      AP01_HORA,                              ",            
+   "                      AP01_MINUTO,                            ",            
+   "                      AP01_ESTADO,                            ",            
+   "                      AP01_CMD1,                              ",            
+   "                      AP01_CMD2,                              ",            
+   "  CURRENT TIMESTAMP   AP01_TIME2,                             ",            
+   "                      AP01_MODO                               ",            
+   "  FROM SDAYP.AP_COMANDO01                                     ",            
+   "  WHERE AP01_DIASEM = '"DIASEM"'                              ",            
+   "    AND AP01_HORA = '"HORA"'                                  ",            
+   "    AND AP01_MINUTO = '"MINUTO"'                              ",            
+   "    AND AP01_CMD2 = '"CMD2"'                                  ",            
+   "                                                              "             
+   "REXXSQL"                                                                    
+RETURN 00  /* INSERT99_PLAN */                                                  
+                                                                                
+/* Aparentemente no se usa.                                                     
+INSERT99:                                                                       
+   SUBSYS='DBC4'                                                                
+   SQLQUERY= ,                                                                  
+   "   INSERT   INTO SDAYP.AP_COMANDO99                           ",            
+   "   SELECT * FROM SDAYP.AP_COMANDO01                           ",            
+   "   WHERE AP01_TIME1 = '"TIME1"'                               ",            
+   "                                                              ",            
+   "                                                              "             
+   "REXXSQL"                                                                    
+RETURN 00  /* INSERT99 */                                                       
+*/                                                                              
+                                                                                
+/*********************************************************************/         
+/* DELETE_01: Borra la fila correspondiente al SUBMIT no planificado */         
+/* inmediatamente despues de ejecutarlo y meterlo en el historico.   */         
+/*********************************************************************/         
+DELETE01:                                                                       
+   SUBSYS='DBC4'                                                                
+   SQLQUERY= ,                                                                  
+    "   DELETE FROM SDAYP.AP_COMANDO01                            ",            
+    "   WHERE AP01_TIME1 = '"TIME1"'                              ",            
+    "                                                             ",            
+    "                                                             "             
+   "REXXSQL"                                                                    
+RETURN 00  /* DELETE01 */                                                       
+                                                                                
+/*********************************************************************/         
+/* SUBMIT_JOB1: Submite por Internal Reader                          */         
+/*********************************************************************/         
+SUBMIT_JOB1:                                                                    
+   XXX = OUTTRAP(OUT1.)                                                         
+   "SUBMIT '"MEMJOB"'"                                                          
+   XXX = OUTTRAP(OFF)                                                           
+                                                                                
+   I = 1                                                                        
+   SAY '  -> OUTTRAP=' OUT1.0 'LINEAS'                                          
+   DO WHILE I <= OUT1.0                                                         
+      SAY '  -> OUTTRAP.'|| I ' = ' OUT1.I                                      
+      I = I + 1                                                                 
+   END                                                                          
+RETURN 00 /* SUBMIT_JOB1 */                                                     
+                                                                                
+/*********************************************************************/         
+/* SUBMIT_JOB2: Submite por IEBGENER                                 */         
+/*********************************************************************/         
+SUBMIT_JOB2:                                                                    
+   XXX = OUTTRAP(OUT1.)                                                         
+                                                                                
+   "FREE FI(SYSUT1, SYSUT2, SYSPRINT, SYSIN                  )"                 
+                                                                                
+   "ALLOC F(SYSUT1) SPACE(1,1) TRACK LRECL(80) RECFM(F) BLKSIZE(80) REU"        
+   HH = JCL01()                                                                 
+   "EXECIO * DISKW SYSUT1 (STEM UT. FINIS"                                      
+   SAY 'RC IO SYSUT1 =' RC                                                      
+                                                                                
+   "ALLOC FI(SYSPRINT) DUMMY " /* SHR REUSE"  */                                
+   SAY 'RC SYSPRINT       =' RC                                                 
+   "ALLOC FI(SYSIN)    DUMMY " /* SHR REUSE"  */                                
+   SAY 'RC SYSIN          =' RC                                                 
+   "ALLOC FI(SYSUT2) SYSOUT() WRITER(INTRDR) "                                  
+   SAY 'RC SYSUT2         =' RC                                                 
+                                                                                
+   "CALL *(IEBGENER)               "                                            
+   SAY 'RC CALL      =' RC                                                      
+                                                                                
+   "FREE FI(SYSUT1, SYSUT2, SYSPRINT, SYSIN                  )"                 
+                                                                                
+   XXX = OUTTRAP(OFF)                                                           
+RETURN 00 /* SUBMIT_JOB2 */                                                     
+                                                                                
+                                                                                
+/*********************************************************************/         
+/* JCL01: Monta un JCL dinamico                                      */         
+/*********************************************************************/         
+JCL01:                                                                          
+JCLNOM = 'AACC02SD'                                                             
+   PASO   = 'EXECREXX'                                                          
+   LIB    = 'SIS.SI5FCR.REXX'                                                   
+   RX1    = 'AP1RX001'                                                          
+   PAR    = ' '                                                                 
+   DROP UT.                                                                     
+   UT.1 = "//"JCLNOM" JOB CLASS=S,MSGCLASS=X,MSGLEVEL=(1,1),    "               
+   UT.2 = "//           NOTIFY=&SYSUID                             "            
+   UT.3 = "//"PASO" EXEC PGM=IKJEFT01,DYNAMNBR=100,REGION=4096K  "              
+   UT.4 = "//SYSTSPRT DD SYSOUT=*                                  "            
+   UT.5 = "//SYSTERM  DD SYSOUT=*                                  "            
+   UT.6 = "//SYSEXEC  DD DISP=SHR,DSN="LIB"  "                                  
+   UT.7 = "//SYSTSIN  DD *                                         "            
+   UT.8 = " %"RX1" "PAR" "                                                      
+   UT.9 = "/*                                                      "            
+RETURN 00                                                                       
+                                                                                
+/*********************************************************************/         
+/* MUESTRA_SQL: Imprime informacion de debug tras la ultima llamada  */         
+/* REXXSQL.                                                          */         
+/*********************************************************************/         
+MUESTRA_SQL:                                                                    
+  SAY "SQLQUERY         = " space(SQLQUERY)                                     
+  SAY "SQLCODE          = " SQLCODE                                             
+  SAY "SQLCA            = " SQLCA                                               
+  SAY "RC               = " RC                                                  
+  SAY "_NROWS           = " _NROWS                                              
+  SAY "_VN.0            = " _VN.0                                               
+  SAY "_VN.1            = " _VN.1                                               
+  SAY "_VN.1.1          = " _VN.1.1                                             
+  SAY "_VN.2            = " _VN.2                                               
+  SAY "SQLERRM          = " SQLERRM                                             
+  SAY "XX               = " XX.1                                                
+RETURN 00   /* MUESTRA_SQL */                                                   
+                                                                                
+/* Las 'macros' SIGSETEMPTY y SIGADDSET facilitan la creacion de     */         
+/* las variables necesarias para el manejo de las syscalls           */         
+SIGSETEMPTY: RETURN COPIES(0,64)                                                
+SIGADDSET: RETURN OVERLAY(1,ARG(1),ARG(2))                                      
+                                                                                
+/*********************************************************************/         
+/* SYSCALL_CMD: Activa las SYSCALLS en el segmento OMVS para esta    */         
+/* ejecucion y maneja los errores que puedan surgir en el proceso    */         
+/*********************************************************************/         
+SYSCALL_CMD: TRACE O                                                            
+   PARSE ARG SYSCALL_CMD, CALL_TYPE, NO_DISPLAY                                 
+   DISPLAY_MSGS = (NO_DISPLAY<>"1")                                             
+   EXIT_ON_ERROR = (CALL_TYPE="")                                               
+   ADDRESS SYSCALL SYSCALL_CMD                                                  
+                                                                                
+   IF RC=0 & RETVAL=-1 & ERRNO=70 & ERRNOJR="59D0135" THEN                      
+   DO                                                                           
+      NOT_OK = 0                                                                
+      RETVAL = 0                                                                
+   END                                                                          
+   ELSE NOT_OK = (RC<>0 | RETVAL<0 | RETVAL=0 & (ERRNO<>0 | ERRNOJR<>0))        
+   OK = (NOT_OK = 0)                                                            
+                                                                                
+   IF NOT_OK & DISPLAY_MSGS THEN                                                
+   DO                                                                           
+      IF CALL_TYPE=INFO_ON_TIMEOUT & ERRNO=78 THEN                              
+      DO                                                                        
+         TIME_OUT = 1                                                           
+         FINAL_RC = 8                                                           
+      END                                                                       
+      ELSE DO                                                                   
+         SAY "SYSCALL SERVICE:" SYSCALL_CMD                                     
+         SAY "SYSCALL RETURN CODE=" RC                                          
+         SAY "OMVS RETURN VALUE  =" RETVAL                                      
+         SAY "OMVS RETURN CODE   =" ERRNO                                       
+         SAY "OMVS REASON CODE   =" ERRNOJR                                     
+                                                                                
+         IS_OMVS_RANGE = X2D(LEFT(RIGHT(ERRNOJR,8,"0"),4))<=X2D(20FF)           
+         ERRNO_SAVE = ERRNO                                                     
+         ERRNOJR_SAVE = ERRNOJR                                                 
+                                                                                
+         IF ERRNO<>"A3" & ERRNO<>"A4" & IS_OMVS_RANGE THEN                      
+           SHOW_REASON = 1                                                      
+         ELSE                                                                   
+           SHOW_REASON = 0                                                      
+                                                                                
+         ADDRESS SYSCALL "STRERROR" ERRNO ERRNOJR "ERR."                        
+                                                                                
+         IF RC=0 & RETVAL>=0 THEN                                               
+         DO                                                                     
+            IF ERR.SE_ERRNO<>"" THEN                                            
+               SAY "OMVS RETURN CODE EXPLANATION -" ERR.SE_ERRNO                
+            IF SHOW_REASON & ERR.SE_REASON<>"" THEN                             
+               SAY "OMVS REASON CODE EXPLANATION -" ERR.SE_REASON               
+         END                                                                    
+                                                                                
+         ERRNO = ERRNO_SAVE                                                     
+         ERRNOJR = ERRNOJR_SAVE                                                 
+                                                                                
+         IF EXIT_ON_ERROR THEN CALL FINAL_EXIT 8                                
+      END /* ELSE */                                                            
+    END /* IF NOT_OK & DISPLAY_MSGS */                                          
+RETURN  /* SYSCALL_CMD              */                                          
+                                                                                
+                                                                                
+                                                                                

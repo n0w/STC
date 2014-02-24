@@ -1,0 +1,374 @@
+/**************************** REXX ************************************/        
+/*                        ! STC AACC !                                */        
+/*                        ·==========·                                */        
+/*                                                                    */        
+/* Autor: Angel Suarez-Barcena Martin                                 */        
+/*                                                                    */        
+/* Tarea que ejecuta automaticamente ciertos procesos especificados   */        
+/* en la tabla [DBC4]SDAYP.AP_COMANDO01.                              */        
+/*                                                                    */        
+/* Este REXX hace las veces de panel de control, siendo la interfaz   */        
+/* entre el usuario y la STC, gestionando las filas de la tabla DB2.  */        
+/**********************************************************************/        
+/* ---------------   C T E S   Y   V A R S           ---------------  */        
+I = 1                                                                           
+PANLIB = 'SIS.SDAEST.AAAA.EXEC'                                                 
+PANEL_PPL = 'STCPL001'                                                          
+PANEL_INF = 'STCPL002'                                                          
+PANEL_ALT = 'STCPL003'                                                          
+PANEL_PID = 'STCPL004'                                                          
+                                                                                
+HAY_DATOS = 0                                                                   
+                                                                                
+stemDIAS.1 = "Lunes"                                                            
+stemDIAS.2 = "Martes"                                                           
+stemDIAS.3 = "Miercoles"                                                        
+stemDIAS.4 = "Jueves"                                                           
+stemDIAS.5 = "Viernes"                                                          
+stemDIAS.6 = "Sabados"                                                          
+stemDIAS.7 = "Domingos"                                                         
+                                                                                
+/* ---------------   I N I C I A L I Z A C I O N     ---------------  */        
+/* Activamos las syscalls                                             */        
+IF SYSCALLS("ON")>4 THEN DO                                                     
+   SAY "[e] Fallo la llamada a SYSCALLS(ON)"                                    
+   EXIT 8                                                                       
+END                                                                             
+                                                                                
+/* Registramos el proceso para que reciba se¦ales                     */        
+IF SYSCALLS("SIGON")<>0 THEN DO                                                 
+   SAY "[E] Fallo al registrar la interfaz de se¦ales"                          
+   EXIT 8                                                                       
+END                                                                             
+                                                                                
+/* Activamos las se¦ales en rexx y desbloqueamos                      */        
+AUX = SIGADDSET(SIGSETEMPTY(),SIGALRM)                                          
+ADDRESS SYSCALL "SIGACTION" SIGALRM SIG_CAT 0 "OHDL OFLG"                       
+CALL SYSCALL_CMD "SIGPROCMASK" SIG_UNBLOCK AUX "MASK"                           
+                                                                                
+                                                                                
+/* ---------------   R U T I N A  P R I N C I P A L   --------------  */        
+                                                                                
+/* Creamos tabla ISPF                                                 */        
+/* NOTA: La instancia de la tabla lleva un nombre unico asociado. */            
+/* Esto implica que dos sesiones distintas no pueden tener abierto el */        
+/* programa a la vez. */                                                        
+/* Si esto fuera necesario, solo habria que randomizar el nombre de la*/        
+/* tabla (TBCMD)                                                      */        
+                                                                                
+"ISPEXEC TBCREATE TBCMD NAMES(DIA HORA LANZA MD) NOWRITE"                       
+SAVE_RC = RC                                                                    
+XX = CARGAR_DATOS()                                                             
+RC = SAVE_RC                                                                    
+                                                                                
+   "ISPEXEC LIBDEF ISPPLIB DATASET ID('"PANLIB"')"                              
+   "ISPEXEC TBTOP TBCMD"                                                        
+                                                                                
+DO FOREVER                                                                      
+   "ISPEXEC TBDISPL TBCMD PANEL (STCPL001) CURSOR(LINECMD) AUTOSEL(NO)"         
+   IF RC > 4 THEN LEAVE                                                         
+                                                                                
+   /* Miramos primero el ZCMD, antes del bucle de seleccion           */        
+   IF ZCMD = "ALTA" THEN XX = DAR_ALTA()                                        
+   IF ZCMD = "WAKE" THEN XX = DESPIERTA()                                       
+                                                                                
+   /* Ahora comprobamos los comandos de linea                         */        
+   DO ztdsels /* Contiene el numero de opciones seleccionadas         */        
+      LCMD = TRANSLATE(LINECMD)                                                 
+                                                                                
+      SELECT                                                                    
+         /* ---------------   B O R R A R   --------------            */        
+         WHEN LCMD = 'D' THEN                                                   
+         DO                                                                     
+            /* Es necesario parsear el valor formato HH:MM            */        
+            DELIM = ':'                                                         
+            BORRA_DIA = DIA                                                     
+            PARSE VALUE HORA WITH BORRA_HORA (DELIM) BORRA_MINUTO               
+                                                                                
+            /* Borramos tanto de la tabla DB2 como de la ISPF */                
+            XX = BORRAR_FILA()                                                  
+                                                                                
+            "ISPEXEC TBDELETE TBCMD"                                            
+         END                                                                    
+                                                                                
+         /* ---------------   I N F O R M A C I O N  -----------      */        
+         WHEN LCMD = 'I' THEN                                                   
+         DO                                                                     
+            /* Es necesario parsear el valor formato HH:MM            */        
+            DELIM = ':'                                                         
+            BORRA_DIA = DIA                                                     
+            PARSE VALUE HORA WITH BORRA_HORA (DELIM) BORRA_MINUTO               
+                                                                                
+            XX = INFO_FILA()                                                    
+                                                                                
+            iProc = LANZA                                                       
+            iDia  = stemDias.DIA                                                
+            iHora = HORA                                                        
+            iUser = AP01_USUARIO.1                                              
+                                                                                
+            IF AP01_TIME2.1 = '2013-01-01-00.00.00.000000'                      
+            THEN                                                                
+               iLastExe = 'Nunca'                                               
+            ELSE                                                                
+               iLastExe = AP01_TIME2.1                                          
+                                                                                
+            "ISPEXEC ADDPOP ROW(4) COLUMN(8)"                                   
+            ZWINTTL = "Informacion"                                             
+            "ISPEXEC DISPLAY PANEL("PANEL_INF")"                                
+            RCODE = RC                                                          
+            "ISPEXEC REMPOP"                                                    
+         END                                                                    
+         OTHERWISE SAY "[e]> "LCMD": Comando no disponible."                    
+      END /* Select       */                                                    
+      /* MAGIA: Quitando este IF no se limpia el comando de linea     */        
+      IF ztdsels = 1                                                            
+         THEN ztdsels = 0                                                       
+      ELSE                                                                      
+         "ISPEXEC TBDISPL TBCMD"                                                
+   END /* Multiseleccion  */                                                    
+   LINECMD = '' /* Limpiamos */                                                 
+END /* Forever            */                                                    
+                                                                                
+"ISPEXEC LIBDEF ISPPLIB"                                                        
+"ISPEXEC TBCLOSE TBCMD"                                                         
+RETURN                                                                          
+                                                                                
+/* -------------        S U B R U T I N A S        -----------------  */        
+                                                                                
+                                                                                
+/**********************************************************************/        
+/* DESPIERTA: Dado el PID, envia un SIGCONT a la tarea para           */        
+/* despertarla                                                        */        
+/**********************************************************************/        
+DESPIERTA:                                                                      
+   "ISPEXEC ADDPOP ROW(4) COLUMN(18)"                                           
+   ZWINTTL = "Envio de se¦al SIGCONT"                                           
+   "ISPEXEC DISPLAY PANEL("PANEL_PID")"                                         
+   RCODE = RC                                                                   
+   "ISPEXEC REMPOP"                                                             
+                                                                                
+   IF RCODE = 0 THEN                                                            
+      CALL SYSCALL_CMD "KILL" aPid SIGCONT                                      
+                                                                                
+RETURN 00                                                                       
+                                                                                
+/**********************************************************************/        
+/* DAR_ALTA: Da de alta un nuevo proceso planificado, insertando      */        
+/* una fila en la tabla DB2 y en la ISPF.                             */        
+/*                                                                    */        
+/* La validacion de los datos se hace en el panel mediante la         */        
+/* instruccion VER()                                                  */        
+/*                                                                    */        
+/* La comprobacion de que no haya dos filas con mismo (Dia,Hora,Min)  */        
+/* se hace en esta rutina.                                            */        
+/**********************************************************************/        
+DAR_ALTA:                                                                       
+   "ISPEXEC ADDPOP ROW(4) COLUMN(8)"                                            
+   ZWINTTL = "Alta de proceso nuevo"                                            
+   "ISPEXEC DISPLAY PANEL("PANEL_ALT")"                                         
+   RCODE = RC                                                                   
+   "ISPEXEC REMPOP"                                                             
+                                                                                
+   /* Si salimos del panel con F3, no seguir ejecutando               */        
+   IF RCODE <> 0 THEN RETURN 00                                                 
+                                                                                
+   vUserID = USERID()                                                           
+                                                                                
+   /* Comprobamos que dos filas no puedan tener mismo dia hora y min  */        
+   /* aprovechando las variables declaradas para la rutina borrar     */        
+   BORRA_DIA = aDia                                                             
+   BORRA_HORA = aHora                                                           
+   BORRA_MINUTO = aMin                                                          
+                                                                                
+   XX = INFO_FILA()                                                             
+                                                                                
+   IF _NROWS <> 0 THEN                                                          
+   DO                                                                           
+      SAY "[|] Solo se permite un proceso cada dia a la misma hora"             
+      RETURN 00                                                                 
+   END                                                                          
+                                                                                
+   SQLQUERY= ,                                                                  
+   "INSERT INTO SDAYP.AP_COMANDO01                                ",            
+   "(                                                             ",            
+   " AP01_USUARIO,                                                ",            
+   " AP01_TIME1,                                                  ",            
+   " AP01_DIASEM,                                                 ",            
+   " AP01_HORA,                                                   ",            
+   " AP01_MINUTO,                                                 ",            
+   " AP01_CMD1,                                                   ",            
+   " AP01_CMD2,                                                   ",            
+   " AP01_TIME2,                                                  ",            
+   " AP01_MODO                                                    ",            
+   ")                                                             ",            
+   "VALUES                                                        ",            
+   "(                                                             ",            
+   " '"vUserID"',                                                 ",            
+   " CURRENT_TIMESTAMP,                                           ",            
+   " "aDia",                                                      ",            
+   " "aHora",                                                     ",            
+   " "aMin",                                                      ",            
+   " 'PLAN',                                                      ",            
+   " '"aProc"',                                                   ",            
+   " '2013-01-01 00:00:00',                                       ",            
+   " '"aModo"'                                                    ",            
+   ")                                                             "             
+                                                                                
+   "REXXSQL"                                                                    
+                                                                                
+   /* Si se inserto correctamente en DB2, insertamos en ISPF          */        
+   IF RC = 0 THEN                                                               
+   DO                                                                           
+      DIA = aDia                                                                
+      MINUTOS = aMin                                                            
+      /* Para mostrar la hora en formato 18:05 en vez de 18:5         */        
+      IF LENGTH(aMin) <= 1 THEN                                                 
+         MINUTOS = "0"aMin                                                      
+      ELSE                                                                      
+         MINUTOS = aMin                                                         
+                                                                                
+      MD = aModo                                                                
+      HORA = aHora":"MINUTOS                                                    
+      LANZA = aProc                                                             
+                                                                                
+      /* A¦adimos la fila a la tabla ISPF con el comando TBADD        */        
+      "ISPEXEC TBADD TBCMD"                                                     
+                                                                                
+      /* Ordenamos la tabla                                           */        
+      "ISPEXEC TBSORT TBCMD FIELDS(DIA,N,A,HORA,C,A)"                           
+   END                                                                          
+                                                                                
+RETURN 00 /* DAR_ALTA */                                                        
+                                                                                
+/**********************************************************************/        
+/* CARGAR_DATOS: Lanza la query y refresca las variables REXX         */        
+/**********************************************************************/        
+CARGAR_DATOS:                                                                   
+   /* Lanzamos query y vamos poblando la tabla                        */        
+   I  = 1                                                                       
+   XX = SELECT_PLAN()                                                           
+                                                                                
+   IF _NROWS <> 0 THEN                                                          
+   DO _NROWS                                                                    
+      DIA = AP01_DIASEM.I                                                       
+                                                                                
+      /* Para mostrar la hora en formato 18:05 en vez de 18:5         */        
+      IF LENGTH(AP01_MINUTO.I) <= 1 THEN                                        
+         MINUTOS = "0"AP01_MINUTO.I                                             
+      ELSE                                                                      
+         MINUTOS = AP01_MINUTO.I                                                
+                                                                                
+      MD = AP01_MODO.I                                                          
+      HORA = AP01_HORA.I":"MINUTOS                                              
+      LANZA =AP01_CMD2.I                                                        
+                                                                                
+      /* A¦adimos la fila a la tabla ISPF con el comando TBADD        */        
+      "ISPEXEC TBADD TBCMD"                                                     
+      HAY_DATOS = 1 /* Por si no hay filas, no mostrar tabla despues  */        
+      I = I + 1                                                                 
+   END                                                                          
+RETURN 00                                                                       
+                                                                                
+/*********************************************************************/         
+/* BORRAR_FILA: Borra la fila que corresponda de la tabla DB2        */         
+/*********************************************************************/         
+BORRAR_FILA:                                                                    
+   SUBSYS='DBC4'                                                                
+   SQLQUERY= ,                                                                  
+   "DELETE                                                        ",            
+   " FROM SDAYP.AP_COMANDO01                                      ",            
+   " WHERE                                                        ",            
+   "     AP01_DIASEM = "BORRA_DIA"                                ",            
+   " AND AP01_HORA   = "BORRA_HORA"                               ",            
+   " AND AP01_MINUTO = "BORRA_MINUTO                                            
+   "REXXSQL"                                                                    
+RETURN 00 /* BORRAR_FILA */                                                     
+                                                                                
+/*********************************************************************/         
+/* INFO_FILA: Devuelve informacion sobre una fila                    */         
+/*********************************************************************/         
+INFO_FILA:                                                                      
+   SUBSYS='DBC4'                                                                
+   SQLQUERY= ,                                                                  
+   "SELECT *                                                      ",            
+   " FROM SDAYP.AP_COMANDO01                                      ",            
+   " WHERE                                                        ",            
+   "     AP01_DIASEM = "BORRA_DIA"                                ",            
+   " AND AP01_HORA   = "BORRA_HORA"                               ",            
+   " AND AP01_MINUTO = "BORRA_MINUTO                                            
+   "REXXSQL"                                                                    
+RETURN 00 /* INFO_FILA */                                                       
+                                                                                
+/*********************************************************************/         
+/* SELECT_PLAN: Lanza la query que devuelve las filas de la tabla    */         
+/* [DBC4]SDAYP.AP_COMANDO01 correspondientes a la planificacion      */         
+/*********************************************************************/         
+SELECT_PLAN:                                                                    
+   SUBSYS='DBC4'                                                                
+   SQLQUERY= ,                                                                  
+   "SELECT                                                        ",            
+   " AP01_USUARIO,                                                ",            
+   " AP01_TIME1,                                                  ",            
+   " AP01_DIASEM,                                                 ",            
+   " AP01_HORA,                                                   ",            
+   " AP01_MINUTO,                                                 ",            
+   " AP01_ESTADO,                                                 ",            
+   " AP01_CMD1,                                                   ",            
+   " AP01_CMD2,                                                   ",            
+   " AP01_TIME2,                                                  ",            
+   " AP01_MODO                                                    ",            
+   "FROM SDAYP.AP_COMANDO01                                       ",            
+   "WHERE AP01_CMD1 = 'PLAN'                                      ",            
+   "ORDER BY AP01_DIASEM,AP01_HORA,AP01_MINUTO                    "             
+   "REXXSQL"                                                                    
+RETURN 00 /* SELECT_PLAN */                                                     
+                                                                                
+/*********************************************************************/         
+/* SYSCALL_CMD: Encapsula la llamada a SYSCALL                       */         
+/*********************************************************************/         
+SYSCALL_CMD: TRACE O                                                            
+  PARSE ARG SYSCALL_CMD, CALL_TYPE, NO_DISPLAY                                  
+  DISPLAY_MSGS = (NO_DISPLAY<>"1")                                              
+  EXIT_ON_ERROR = (CALL_TYPE="")                                                
+  ADDRESS SYSCALL SYSCALL_CMD                                                   
+  IF RC=0 & RETVAL=-1 & ERRNO=70 & ERRNOJR="59D0135" THEN DO                    
+    NOT_OK = 0                                                                  
+    RETVAL = 0                                                                  
+  END                                                                           
+  ELSE NOT_OK = (RC<>0 | RETVAL<0 | RETVAL=0 & (ERRNO<>0 | ERRNOJR<>0))         
+  OK = (NOT_OK = 0)                                                             
+  IF NOT_OK & DISPLAY_MSGS THEN DO                                              
+    IF CALL_TYPE=INFO_ON_TIMEOUT & ERRNO=78 THEN DO                             
+      TIME_OUT = 1                                                              
+      FINAL_RC = 8                                                              
+    END                                                                         
+    ELSE DO                                                                     
+       SAY "SYSCALL SERVICE:" SYSCALL_CMD                                       
+       SAY "SYSCALL RETURN CODE=" RC                                            
+       SAY "OMVS RETURN VALUE  =" RETVAL                                        
+       SAY "OMVS RETURN CODE   =" ERRNO                                         
+       SAY "OMVS REASON CODE   =" ERRNOJR                                       
+       IS_OMVS_RANGE = X2D(LEFT(RIGHT(ERRNOJR,8,"0"),4))<=X2D(20FF)             
+       ERRNO_SAVE = ERRNO                                                       
+       ERRNOJR_SAVE = ERRNOJR                                                   
+       IF ERRNO<>"A3" & ERRNO<>"A4" & IS_OMVS_RANGE THEN                        
+         SHOW_REASON = 1                                                        
+       ELSE                                                                     
+         SHOW_REASON = 0                                                        
+       ADDRESS SYSCALL "STRERROR" ERRNO ERRNOJR "ERR."                          
+       IF RC=0 & RETVAL>=0 THEN DO                                              
+         IF ERR.SE_ERRNO<>"" THEN                                               
+           SAY "OMVS RETURN CODE EXPLANATION -" ERR.SE_ERRNO                    
+         IF SHOW_REASON & ERR.SE_REASON<>"" THEN                                
+           SAY "OMVS REASON CODE EXPLANATION -" ERR.SE_REASON                   
+       END                                                                      
+       ERRNO = ERRNO_SAVE                                                       
+       ERRNOJR = ERRNOJR_SAVE                                                   
+       IF EXIT_ON_ERROR THEN                                                    
+          SAY "SALIDA CON ERRORES"                                              
+     END                                                                        
+   END                                                                          
+ RETURN                                                                         
+                                                                                
+SIGSETEMPTY: RETURN COPIES(0,64)                                                
+SIGADDSET: RETURN OVERLAY(1,ARG(1),ARG(2))                                      
