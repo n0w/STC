@@ -18,9 +18,9 @@ It can also wake the STC up by sending SIGCONT to its PID.
 It looks like this:
 
  ``Command ===>                                                   Row 1 to 7 of 7 ``
-                          ·-----------------------------·                       
- (USRNME)                 | Panel de control STC @UAACC |       SCROLL  ===> PAG
-                          ·-----------------------------·                       
+``                          ·-----------------------------·                       ``
+ ``(USRNME)                 | Panel de control STC @UAACC |       SCROLL  ===> PAG``
+                          ``·-----------------------------·                       ``
                                                                                 
   En la siguiente tabla se muestran todos los procesos planificados para        
   ejecucion.                                                                    
